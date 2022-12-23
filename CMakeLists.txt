@@ -7,9 +7,8 @@ if(${CMAKE_VERSION} VERSION_EQUAL 3.12.0 OR ${CMAKE_VERSION} VERSION_GREATER 3.1
 endif()
 
 project(bcc)
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
-endif()
+set(CMAKE_BUILD_TYPE Debug)
+
 
 if(CMAKE_SANITIZE_TYPE)
   add_compile_options(-fsanitize=${CMAKE_SANITIZE_TYPE})
@@ -101,15 +100,15 @@ include(GNUInstallDirs)
 include(CheckCXXCompilerFlag)
 include(cmake/FindCompilerFlag.cmake)
 
-option(ENABLE_LLVM_NATIVECODEGEN "Enable use of llvm nativecodegen module (needed by rw-engine)" ON)
+option(ENABLE_LLVM_NATIVECODEGEN "Enable use of llvm nativecodegen module (needed by rw-engine)" OFF)
 option(ENABLE_RTTI "Enable compiling with real time type information" OFF)
 option(ENABLE_LLVM_SHARED "Enable linking LLVM as a shared library" OFF)
 option(ENABLE_CLANG_JIT "Enable Loading BPF through Clang Frontend" ON)
 option(ENABLE_USDT "Enable User-level Statically Defined Tracing" ON)
 option(ENABLE_EXAMPLES "Build examples" ON)
-option(ENABLE_MAN "Build man pages" ON)
-option(ENABLE_TESTS "Build tests" ON)
-option(RUN_LUA_TESTS "Run lua tests" ON)
+option(ENABLE_MAN "Build man pages" OFF)
+option(ENABLE_TESTS "Build tests" OFF)
+option(RUN_LUA_TESTS "Run lua tests" OFF)
 option(ENABLE_LIBDEBUGINFOD "Use libdebuginfod as a source of debug symbols" ON)
 CMAKE_DEPENDENT_OPTION(ENABLE_CPP_API "Enable C++ API" ON "ENABLE_USDT" OFF)
 

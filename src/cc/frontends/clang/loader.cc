@@ -487,7 +487,7 @@ int ClangLoader::do_compile(
   // capture the rewritten c file
   string out_str1;
   llvm::raw_string_ostream os1(out_str1);
-  BFrontendAction bact(os1, flags_, ts, id, main_path, prog_func_info, mod_src,
+  BtoLibbpfFrontendAction bact(os1, flags_, ts, id, main_path, prog_func_info, mod_src,
                        maps_ns, fake_fd_map, perf_events);
   if (!compiler1.ExecuteAction(bact))
     return -1;

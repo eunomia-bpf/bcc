@@ -390,7 +390,7 @@ bool ProbeVisitor::assignsExtPtr(Expr *E, int *nbDerefs) {
       StringRef memb_name = Memb->getMemberDecl()->getName();
       if (DeclRefExpr *Ref = dyn_cast<DeclRefExpr>(Memb->getBase())) {
         if (SectionAttr *A = Ref->getDecl()->getAttr<SectionAttr>()) {
-          if (!A->getName().startswith("maps"))
+          if (!A->getName().startswith(".maps"))
             return false;
 
           if (memb_name == "lookup" || memb_name == "lookup_or_init" ||
@@ -598,14 +598,10 @@ bool ProbeVisitor::VisitMemberExpr(MemberExpr *E) {
   string rhs = rewriter_.getRewrittenText(expansionRange(SourceRange(rhs_start, GET_ENDLOC(E))));
   string base_type = base->getType()->getPointeeType().getAsString();
   string pre, post;
-  pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
-  if (cannot_fall_back_safely)
-    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (void *)&";
-  else
-    pre += " bpf_probe_read(&_val, sizeof(_val), (void *)&";
-  post = rhs + "); _val; })";
+  pre = "BPF_CORE_READ(";
+  post = string(", ") + rhs + ")";
   rewriter_.InsertText(expansionLoc(GET_BEGINLOC(E)), pre);
-  rewriter_.ReplaceText(expansionRange(SourceRange(member, GET_ENDLOC(E))), post);
+  rewriter_.ReplaceText(expansionRange(SourceRange(E->getOperatorLoc(), GET_ENDLOC(E))), post);
   return true;
 }
 bool ProbeVisitor::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
@@ -747,7 +743,7 @@ DiagnosticBuilder ProbeVisitor::error(SourceLocation loc, const char (&fmt)[N]) 
   return C.getDiagnostics().Report(loc, diag_id);
 }
 
-BTypeVisitor::BTypeVisitor(ASTContext &C, BFrontendAction &fe)
+BTypeVisitor::BTypeVisitor(ASTContext &C, BtoLibbpfFrontendAction &fe)
     : C(C), diag_(C.getDiagnostics()), fe_(fe), rewriter_(fe.rewriter()), out_(llvm::errs()) {
   const char **calling_conv_regs = get_call_conv();
   cannot_fall_back_safely = (calling_conv_regs == calling_conv_regs_s390x || calling_conv_regs == calling_conv_regs_riscv64);
@@ -856,8 +852,7 @@ bool BTypeVisitor::VisitFunctionDecl(FunctionDecl *D) {
     func_info->src_ = bd;
     fe_.func_range_[current_fn_] = expansionRange(D->getSourceRange());
     if (!D->getAttr<SectionAttr>()) {
-      string attr = string("__attribute__((section(\"") + BPF_FN_PREFIX +
-                    D->getName().str() + "\")))\n";
+      string attr = string("SEC(\"kprobe\")\n");
       rewriter_.InsertText(real_start_loc, attr);
     }
     if (D->param_size() > MAX_CALLING_CONV_REGS + 1) {
@@ -880,7 +875,7 @@ bool BTypeVisitor::VisitFunctionDecl(FunctionDecl *D) {
              rewriter_.getSourceMgr().getFileID(real_start_loc)
                == rewriter_.getSourceMgr().getMainFileID()) {
     // rewritable functions that are static should be always treated as helper
-    rewriter_.InsertText(real_start_loc, "__attribute__((always_inline))\n");
+    // rewriter_.InsertText(real_start_loc, "__attribute__((always_inline))\n");
   }
   return true;
 }
@@ -933,17 +928,8 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           string name = string(Ref->getDecl()->getName());
           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
           string arg1 = rewriter_.getRewrittenText(expansionRange(Call->getArg(1)->getSourceRange()));
-          string lookup = "bpf_map_lookup_elem_(bpf_pseudo_fd(1, " + fd + ")";
-          string update = "bpf_map_update_elem_(bpf_pseudo_fd(1, " + fd + ")";
-          txt  = "({typeof(" + name + ".leaf) *leaf = " + lookup + ", " + arg0 + "); ";
-          txt += "if (!leaf) {";
-          txt += " " + update + ", " + arg0 + ", " + arg1 + ", BPF_NOEXIST);";
-          txt += " leaf = " + lookup + ", " + arg0 + ");";
-          if (memb_name == "lookup_or_init") {
-            txt += " if (!leaf) return 0;";
-          }
-          txt += "}";
-          txt += "leaf;})";
+          string lookup = "bpf_map_lookup_or_try_init(&" + name;
+          txt  = lookup + ", " + arg0 + ", " + arg1 + "); ";
         } else if (memb_name == "increment" || memb_name == "atomic_increment") {
           string name = string(Ref->getDecl()->getName());
           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
@@ -954,21 +940,22 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
 
           }
 
-          string lookup = "bpf_map_lookup_elem_(bpf_pseudo_fd(1, " + fd + ")";
-          string update = "bpf_map_update_elem_(bpf_pseudo_fd(1, " + fd + ")";
-          txt  = "({ typeof(" + name + ".key) _key = " + arg0 + "; ";
-          txt += "typeof(" + name + ".leaf) *_leaf = " + lookup + ", &_key); ";
-          txt += "if (_leaf) ";
+          // string lookup = "bpf_map_lookup_elem_(bpf_pseudo_fd(1, " + fd + ")";
+          // string update = "bpf_map_update_elem_(bpf_pseudo_fd(1, " + fd + ")";
+          // txt  = "({ typeof(" + name + ".key) _key = " + arg0 + "; ";
+          // txt += "typeof(" + name + ".leaf) *_leaf = " + lookup + ", &_key); ";
+          // txt += "if (_leaf) ";
 
           if (memb_name == "atomic_increment") {
-            txt += "lock_xadd(_leaf, " + increment_value + ");";
+            txt = "__atomic_add_fetch(" + name + ", " + increment_value + ", __ATOMIC_RELAXED);";
           } else {
-            txt += "(*_leaf) += " + increment_value + ";";
+            txt = "__sync_fetch_and_add(" + name + ", " + increment_value + "); ";
+            //txt += "(*_leaf) += " + increment_value + ";";
           }
           if (desc->second.type == BPF_MAP_TYPE_HASH) {
-            txt += "else { typeof(" + name + ".leaf) _zleaf; __builtin_memset(&_zleaf, 0, sizeof(_zleaf)); ";
-            txt += "_zleaf += " + increment_value + ";";
-            txt += update + ", &_key, &_zleaf, BPF_NOEXIST); } ";
+            // txt += "else { typeof(" + name + ".leaf) _zleaf; __builtin_memset(&_zleaf, 0, sizeof(_zleaf)); ";
+            // txt += "_zleaf += " + increment_value + ";";
+            // txt += update + ", &_key, &_zleaf, BPF_NOEXIST); } ";
           }
           txt += "})";
         } else if (memb_name == "perf_submit") {
@@ -976,7 +963,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
           string args_other = rewriter_.getRewrittenText(expansionRange(SourceRange(GET_BEGINLOC(Call->getArg(1)),
                                                            GET_ENDLOC(Call->getArg(2)))));
-          txt = "bpf_perf_event_output(" + arg0 + ", (void *)bpf_pseudo_fd(1, " + fd + ")";
+          txt = "bpf_perf_event_output(" + arg0 + ", &" + name;
           txt += ", CUR_CPU_IDENTIFIER, " + args_other + ")";
 
           // e.g.
@@ -1003,9 +990,10 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           string skb_len = rewriter_.getRewrittenText(expansionRange(Call->getArg(1)->getSourceRange()));
           string meta = rewriter_.getRewrittenText(expansionRange(Call->getArg(2)->getSourceRange()));
           string meta_len = rewriter_.getRewrittenText(expansionRange(Call->getArg(3)->getSourceRange()));
+          string name = string(Ref->getDecl()->getName());
           txt = "bpf_perf_event_output(" +
             skb + ", " +
-            "(void *)bpf_pseudo_fd(1, " + fd + "), " +
+            "&" + name + ", " +
             "((__u64)" + skb_len + " << 32) | BPF_F_CURRENT_CPU, " +
             meta + ", " +
             meta_len + ");";
@@ -1014,7 +1002,8 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
             string arg0 =
                 rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
             txt = "bcc_get_stackid(";
-            txt += "bpf_pseudo_fd(1, " + fd + "), " + arg0;
+            string name = string(Ref->getDecl()->getName());
+            txt += "&" + name + ", " + arg0;
             rewrite_end = GET_ENDLOC(Call->getArg(0));
             } else {
               error(GET_BEGINLOC(Call), "get_stackid only available on stacktrace maps");
@@ -1024,13 +1013,14 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           string ctx = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
           string keyp = rewriter_.getRewrittenText(expansionRange(Call->getArg(1)->getSourceRange()));
           string flag = rewriter_.getRewrittenText(expansionRange(Call->getArg(2)->getSourceRange()));
+          string name = string(Ref->getDecl()->getName());
           txt = "bpf_" + string(memb_name) + "(" + ctx + ", " +
-            "(void *)bpf_pseudo_fd(1, " + fd + "), " + keyp + ", " + flag + ");";
+            "&" + name + ", " + keyp + ", " + flag + ");";
         } else if (memb_name == "ringbuf_output") {
           string name = string(Ref->getDecl()->getName());
           string args = rewriter_.getRewrittenText(expansionRange(SourceRange(GET_BEGINLOC(Call->getArg(0)),
                                                            GET_ENDLOC(Call->getArg(2)))));
-          txt = "bpf_ringbuf_output((void *)bpf_pseudo_fd(1, " + fd + ")";
+          txt = "bpf_ringbuf_output(&" + name;
           txt += ", " + args + ")";
 
           // e.g.
@@ -1052,7 +1042,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
         } else if (memb_name == "ringbuf_reserve") {
           string name = string(Ref->getDecl()->getName());
           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
-          txt = "bpf_ringbuf_reserve((void *)bpf_pseudo_fd(1, " + fd + ")";
+          txt = "bpf_ringbuf_reserve(&" + name;
           txt += ", " + arg0 + ", 0)"; // Flags in reserve are meaningless
         } else if (memb_name == "ringbuf_discard") {
           string name = string(Ref->getDecl()->getName());
@@ -1154,7 +1144,8 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
             error(GET_BEGINLOC(Call), "invalid bpf_table operation %0") << memb_name;
             return false;
           }
-          prefix += "((void *)bpf_pseudo_fd(1, " + fd + "), ";
+          string name = string(Ref->getDecl()->getName());
+          prefix += "(&" + name + ", ";
 
           txt = prefix + args + suffix;
         }
@@ -1207,19 +1198,21 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           text += args[0] + ", " + args[1] + ", " + args[2];
           text += ", ((" + args[3] + " & 0x1) << 4) | sizeof(" + args[2] + "))";
           rewriter_.ReplaceText(expansionRange(Call->getSourceRange()), text);
-        } else if (Decl->getName() == "bpf_trace_printk") {
-          checkFormatSpecifiers(args[0], GET_BEGINLOC(Call->getArg(0)));
-          //  #define bpf_trace_printk(fmt, args...)
-          //    ({ char _fmt[] = fmt; bpf_trace_printk_(_fmt, sizeof(_fmt), args...); })
-          text = "({ char _fmt[] = " + args[0] + "; bpf_trace_printk_(_fmt, sizeof(_fmt)";
-          if (args.size() <= 1) {
-            text += "); })";
-            rewriter_.ReplaceText(expansionRange(Call->getSourceRange()), text);
-          } else {
-            rewriter_.ReplaceText(expansionRange(SourceRange(GET_BEGINLOC(Call), GET_ENDLOC(Call->getArg(0)))), text);
-            rewriter_.InsertTextAfter(GET_ENDLOC(Call), "); }");
-          }
-        } else if (Decl->getName() == "bpf_num_cpus") {
+        }
+        // else if (Decl->getName() == "bpf_trace_printk") {
+        //   checkFormatSpecifiers(args[0], GET_BEGINLOC(Call->getArg(0)));
+        //   //  #define bpf_trace_printk(fmt, args...)
+        //   //    ({ char _fmt[] = fmt; bpf_trace_printk_(_fmt, sizeof(_fmt), args...); })
+        //   text = "({ char _fmt[] = " + args[0] + "; bpf_trace_printk_(_fmt, sizeof(_fmt)";
+        //   if (args.size() <= 1) {
+        //     text += "); })";
+        //     rewriter_.ReplaceText(expansionRange(Call->getSourceRange()), text);
+        //   } else {
+        //     rewriter_.ReplaceText(expansionRange(SourceRange(GET_BEGINLOC(Call), GET_ENDLOC(Call->getArg(0)))), text);
+        //     rewriter_.InsertTextAfter(GET_ENDLOC(Call), "); }");
+        //   }
+        // } 
+        else if (Decl->getName() == "bpf_num_cpus") {
           int numcpu = sysconf(_SC_NPROCESSORS_ONLN);
           if (numcpu <= 0)
             numcpu = 1;
@@ -1646,7 +1639,7 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
 }
 
 // First traversal of AST to retrieve maps with external pointers.
-BTypeConsumer::BTypeConsumer(ASTContext &C, BFrontendAction &fe,
+BTypeConsumer::BTypeConsumer(ASTContext &C, BtoLibbpfFrontendAction &fe,
                              Rewriter &rewriter, set<Decl *> &m)
     : fe_(fe),
       map_visitor_(m),
@@ -1734,7 +1727,7 @@ void BTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
 
 }
 
-BFrontendAction::BFrontendAction(
+BtoLibbpfFrontendAction::BtoLibbpfFrontendAction(
     llvm::raw_ostream &os, unsigned flags, TableStorage &ts,
     const std::string &id, const std::string &main_path,
     ProgFuncInfo &prog_func_info, std::string &mod_src,
@@ -1753,13 +1746,13 @@ BFrontendAction::BFrontendAction(
       fake_fd_map_(fake_fd_map),
       perf_events_(perf_events) {}
 
-bool BFrontendAction::is_rewritable_ext_func(FunctionDecl *D) {
+bool BtoLibbpfFrontendAction::is_rewritable_ext_func(FunctionDecl *D) {
   StringRef file_name = rewriter_->getSourceMgr().getFilename(GET_BEGINLOC(D));
   return (D->isExternallyVisible() && D->hasBody() &&
           (file_name.empty() || file_name == main_path_));
 }
 
-void BFrontendAction::DoMiscWorkAround() {
+void BtoLibbpfFrontendAction::DoMiscWorkAround() {
   // In 4.16 and later, CONFIG_CC_STACKPROTECTOR is moved out of Kconfig and into
   // Makefile. It will be set depending on CONFIG_CC_STACKPROTECTOR_{AUTO|REGULAR|STRONG}.
   // CONFIG_CC_STACKPROTECTOR is still used in various places, e.g., struct task_struct,
@@ -1789,7 +1782,11 @@ void BFrontendAction::DoMiscWorkAround() {
     "    || defined(CONFIG_CC_STACKPROTECTOR_STRONG)\n"
     "#define CONFIG_CC_STACKPROTECTOR\n"
     "#endif\n"
-    "#endif\n";
+    "#endif\n"
+    "// #include \"bcc/proto.h\"\n"
+    "#include \"bcc/helpers.h\"\n"
+    "#include \"bcc/bpf_workaround.h\"\n";
+
   prologue = prologue + probefunc;
   rewriter_->getEditBuffer(rewriter_->getSourceMgr().getMainFileID()).InsertText(0,
     prologue,
@@ -1801,10 +1798,10 @@ void BFrontendAction::DoMiscWorkAround() {
 #else
     rewriter_->getSourceMgr().getBuffer(rewriter_->getSourceMgr().getMainFileID())->getBufferSize(),
 #endif
-    "\n#include <bcc/footer.h>\n");
+    "\n#include \"bcc/footer.h\"\n");
 }
 
-void BFrontendAction::EndSourceFileAction() {
+void BtoLibbpfFrontendAction::EndSourceFileAction() {
   // Additional misc rewrites
   DoMiscWorkAround();
 
@@ -1829,11 +1826,11 @@ void BFrontendAction::EndSourceFileAction() {
     if (fn)
       fn->src_rewritten_ = bd;
   }
-  rewriter_->getEditBuffer(rewriter_->getSourceMgr().getMainFileID()).write(os_);
+  rewriter_->getEditBuffer(rewriter_->getSourceMgr().getMainFileID()).write(llvm::outs());
   os_.flush();
 }
 
-unique_ptr<ASTConsumer> BFrontendAction::CreateASTConsumer(CompilerInstance &Compiler, llvm::StringRef InFile) {
+unique_ptr<ASTConsumer> BtoLibbpfFrontendAction::CreateASTConsumer(CompilerInstance &Compiler, llvm::StringRef InFile) {
   rewriter_->setSourceMgr(Compiler.getSourceManager(), Compiler.getLangOpts());
   vector<unique_ptr<ASTConsumer>> consumers;
   consumers.push_back(unique_ptr<ASTConsumer>(new BTypeConsumer(Compiler.getASTContext(), *this, *rewriter_, m_)));

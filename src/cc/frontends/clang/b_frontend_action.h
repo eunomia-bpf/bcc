@@ -39,7 +39,7 @@ class StringRef;
 
 namespace ebpf {
 
-class BFrontendAction;
+class BtoLibbpfFrontendAction;
 class ProgFuncInfo;
 
 // Traces maps with external pointers as values.
@@ -59,7 +59,7 @@ class MapVisitor : public clang::RecursiveASTVisitor<MapVisitor> {
 // and store the open handles in a map of table-to-fd's.
 class BTypeVisitor : public clang::RecursiveASTVisitor<BTypeVisitor> {
  public:
-  explicit BTypeVisitor(clang::ASTContext &C, BFrontendAction &fe);
+  explicit BTypeVisitor(clang::ASTContext &C, BtoLibbpfFrontendAction &fe);
   bool TraverseCallExpr(clang::CallExpr *Call);
   bool VisitFunctionDecl(clang::FunctionDecl *D);
   bool VisitCallExpr(clang::CallExpr *Call);
@@ -84,7 +84,7 @@ class BTypeVisitor : public clang::RecursiveASTVisitor<BTypeVisitor> {
 
   clang::ASTContext &C;
   clang::DiagnosticsEngine &diag_;
-  BFrontendAction &fe_;
+  BtoLibbpfFrontendAction &fe_;
   clang::Rewriter &rewriter_;  /// modifications to the source go into this class
   llvm::raw_ostream &out_;  /// for debugging
   std::vector<clang::ParmVarDecl *> fn_args_;
@@ -136,11 +136,11 @@ class ProbeVisitor : public clang::RecursiveASTVisitor<ProbeVisitor> {
 // A helper class to the frontend action, walks the decls
 class BTypeConsumer : public clang::ASTConsumer {
  public:
-  explicit BTypeConsumer(clang::ASTContext &C, BFrontendAction &fe,
+  explicit BTypeConsumer(clang::ASTContext &C, BtoLibbpfFrontendAction &fe,
                          clang::Rewriter &rewriter, std::set<clang::Decl *> &m);
   void HandleTranslationUnit(clang::ASTContext &Context) override;
  private:
-  BFrontendAction &fe_;
+  BtoLibbpfFrontendAction &fe_;
   MapVisitor map_visitor_;
   BTypeVisitor btype_visitor_;
   ProbeVisitor probe_visitor1_;
@@ -150,11 +150,11 @@ class BTypeConsumer : public clang::ASTConsumer {
 // Create a B program in 2 phases (everything else is normal C frontend):
 // 1. Catch the map declarations and open the fd's
 // 2. Capture the IR
-class BFrontendAction : public clang::ASTFrontendAction {
+class BtoLibbpfFrontendAction : public clang::ASTFrontendAction {
  public:
   // Initialize with the output stream where the new source file contents
   // should be written.
-  BFrontendAction(llvm::raw_ostream &os, unsigned flags, TableStorage &ts,
+  BtoLibbpfFrontendAction(llvm::raw_ostream &os, unsigned flags, TableStorage &ts,
                   const std::string &id, const std::string &main_path,
                   ProgFuncInfo &prog_func_info, std::string &mod_src,
                   const std::string &maps_ns, fake_fd_map_def &fake_fd_map,
