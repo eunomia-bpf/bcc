@@ -97,6 +97,7 @@ class ClangLoader {
   std::map<std::string, std::unique_ptr<llvm::MemoryBuffer>> remapped_footers_;
   llvm::LLVMContext *ctx_;
   unsigned flags_;
+  bool aot_mode_;
 };
 
 }  // namespace ebpf

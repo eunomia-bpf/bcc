@@ -514,7 +514,10 @@ int ClangLoader::do_compile(
   if (!compiler2.ExecuteAction(ir_act))
     return -1;
   *mod = ir_act.takeModule();
-
+  if (aot_mode_) {
+    // In AOT mode, exit after generating LLVM IR.
+    exit(0);
+  }
   return 0;
 }
 }  // namespace ebpf
