@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
   std::ifstream json_file(argv[1]);
   std::string json_str((std::istreambuf_iterator<char>(json_file)),
                        std::istreambuf_iterator<char>());
-  ebpf::BPF bpf;
+  ebpf::BPF bpf(0, nullptr, false, "", true, true);
   auto init_res = bpf.init(json_str);
   if (!init_res.ok()) {
     std::cerr << init_res.msg() << std::endl;

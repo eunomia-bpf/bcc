@@ -104,8 +104,8 @@ optional<FuncInfo &> ProgFuncInfo::add_func(std::string name) {
   return get_func(name);
 }
 
-ClangLoader::ClangLoader(llvm::LLVMContext *ctx, unsigned flags)
-    : ctx_(ctx), flags_(flags)
+ClangLoader::ClangLoader(llvm::LLVMContext *ctx, unsigned flags, bool aot_mode)
+    : ctx_(ctx), flags_(flags), aot_mode_(aot_mode)
 {
   for (auto f : ExportedFiles::headers())
     remapped_headers_[f.first] = llvm::MemoryBuffer::getMemBuffer(f.second);
@@ -492,6 +492,10 @@ int ClangLoader::do_compile(
   if (!compiler1.ExecuteAction(bact))
     return -1;
   unique_ptr<llvm::MemoryBuffer> out_buf1 = llvm::MemoryBuffer::getMemBuffer(out_str1);
+  if (aot_mode_) {
+    // In AOT mode, exit after generating libbpf source.
+    exit(0);
+  }
 
   // second pass, clear input and take rewrite buffer
   CompilerInstance compiler2;
@@ -514,10 +518,6 @@ int ClangLoader::do_compile(
   if (!compiler2.ExecuteAction(ir_act))
     return -1;
   *mod = ir_act.takeModule();
-  if (aot_mode_) {
-    // In AOT mode, exit after generating LLVM IR.
-    exit(0);
-  }
   return 0;
 }
 }  // namespace ebpf

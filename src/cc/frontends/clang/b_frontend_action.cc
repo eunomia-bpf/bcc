@@ -535,10 +535,7 @@ bool ProbeVisitor::VisitUnaryOperator(UnaryOperator *E) {
   memb_visited_.insert(E);
   string pre, post;
   pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
-  if (cannot_fall_back_safely)
-    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (void *)";
-  else
-    pre += " bpf_probe_read(&_val, sizeof(_val), (void *)";
+  pre += " bpf_core_read(&_val, sizeof(_val), (void *)";
   post = "); _val; })";
   rewriter_.ReplaceText(expansionLoc(E->getOperatorLoc()), 1, pre);
   rewriter_.InsertTextAfterToken(expansionLoc(GET_ENDLOC(sub)), post);
@@ -649,10 +646,7 @@ bool ProbeVisitor::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
     return true;
 
   pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
-  if (cannot_fall_back_safely)
-    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (void *)((";
-  else
-    pre += " bpf_probe_read(&_val, sizeof(_val), (void *)((";
+  pre += " bpf_core_read(&_val, sizeof(_val), (void *)((";
   if (isMemberDereference(base)) {
     pre += "&";
     // If the base of the array subscript is a member dereference, we'll rewrite
@@ -788,10 +782,7 @@ void BTypeVisitor::genParamIndirectAssign(FunctionDecl *D, string& preamble,
       size_t d = idx - 1;
       const char *reg = calling_conv_regs[d];
       preamble += "\n " + text + ";";
-      if (cannot_fall_back_safely)
-        preamble += " bpf_probe_read_kernel";
-      else
-        preamble += " bpf_probe_read";
+      preamble += " bpf_core_read";
       preamble += "(&" + arg->getName().str() + ", sizeof(" +
                   arg->getName().str() + "), &" + new_ctx + "->" +
                   string(reg) + ");";
@@ -929,7 +920,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
           string arg1 = rewriter_.getRewrittenText(expansionRange(Call->getArg(1)->getSourceRange()));
           string lookup = "bpf_map_lookup_or_try_init(&" + name;
-          txt  = lookup + ", " + arg0 + ", " + arg1 + "); ";
+          txt  = lookup + ", " + arg0 + ", " + arg1 + ") ";
         } else if (memb_name == "increment" || memb_name == "atomic_increment") {
           string name = string(Ref->getDecl()->getName());
           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
@@ -1001,7 +992,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           if (desc->second.type == BPF_MAP_TYPE_STACK_TRACE) {
             string arg0 =
                 rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
-            txt = "bcc_get_stackid(";
+            txt = "bpf_get_stackid(";
             string name = string(Ref->getDecl()->getName());
             txt += "&" + name + ", " + arg0;
             rewrite_end = GET_ENDLOC(Call->getArg(0));
@@ -1199,19 +1190,19 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           text += ", ((" + args[3] + " & 0x1) << 4) | sizeof(" + args[2] + "))";
           rewriter_.ReplaceText(expansionRange(Call->getSourceRange()), text);
         }
-        // else if (Decl->getName() == "bpf_trace_printk") {
-        //   checkFormatSpecifiers(args[0], GET_BEGINLOC(Call->getArg(0)));
-        //   //  #define bpf_trace_printk(fmt, args...)
-        //   //    ({ char _fmt[] = fmt; bpf_trace_printk_(_fmt, sizeof(_fmt), args...); })
-        //   text = "({ char _fmt[] = " + args[0] + "; bpf_trace_printk_(_fmt, sizeof(_fmt)";
-        //   if (args.size() <= 1) {
-        //     text += "); })";
-        //     rewriter_.ReplaceText(expansionRange(Call->getSourceRange()), text);
-        //   } else {
-        //     rewriter_.ReplaceText(expansionRange(SourceRange(GET_BEGINLOC(Call), GET_ENDLOC(Call->getArg(0)))), text);
-        //     rewriter_.InsertTextAfter(GET_ENDLOC(Call), "); }");
-        //   }
-        // } 
+        else if (Decl->getName() == "bpf_trace_printk") {
+          checkFormatSpecifiers(args[0], GET_BEGINLOC(Call->getArg(0)));
+          //  #define bpf_trace_printk(fmt, args...)
+          //    ({ char _fmt[] = fmt; bpf_trace_printk_(_fmt, sizeof(_fmt), args...); })
+          text = "bpf_printk(" + args[0];
+          if (args.size() <= 1) {
+            text += ")";
+            rewriter_.ReplaceText(expansionRange(Call->getSourceRange()), text);
+          } else {
+            rewriter_.ReplaceText(expansionRange(SourceRange(GET_BEGINLOC(Call), GET_ENDLOC(Call->getArg(0)))), text);
+            rewriter_.InsertTextAfter(GET_ENDLOC(Call), ")");
+          }
+        } 
         else if (Decl->getName() == "bpf_num_cpus") {
           int numcpu = sysconf(_SC_NPROCESSORS_ONLN);
           if (numcpu <= 0)

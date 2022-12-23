@@ -68,7 +68,7 @@ class ProgFuncInfo {
 
 class ClangLoader {
  public:
-  explicit ClangLoader(llvm::LLVMContext *ctx, unsigned flags);
+  explicit ClangLoader(llvm::LLVMContext *ctx, unsigned flags, bool aot_mode = false);
   ~ClangLoader();
   int parse(std::unique_ptr<llvm::Module> *mod, TableStorage &ts,
             const std::string &file, bool in_memory, const char *cflags[],
