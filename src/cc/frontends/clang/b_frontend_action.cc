@@ -535,7 +535,7 @@ bool BtoLibbpfProbeVisitor::VisitUnaryOperator(UnaryOperator *E) {
   memb_visited_.insert(E);
   string pre, post;
   pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
-  pre += " bpf_core_read(&_val, sizeof(_val), (void *)";
+  pre += " bpf_core_read((void*)&_val, sizeof(_val), (void *)";
   post = "); _val; })";
   rewriter_.ReplaceText(expansionLoc(E->getOperatorLoc()), 1, pre);
   rewriter_.InsertTextAfterToken(expansionLoc(GET_ENDLOC(sub)), post);
@@ -648,7 +648,7 @@ bool BtoLibbpfProbeVisitor::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
     return true;
 
   pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
-  pre += " bpf_core_read(&_val, sizeof(_val), (void *)((";
+  pre += " bpf_core_read((void*)&_val, sizeof(_val), (void *)((";
   if (isMemberDereference(base)) {
     pre += "&";
     // If the base of the array subscript is a member dereference, we'll rewrite
@@ -785,7 +785,7 @@ void BTypeVisitor::genParamIndirectAssign(FunctionDecl *D, string& preamble,
       const char *reg = calling_conv_regs[d];
       preamble += "\n " + text + ";";
       preamble += " bpf_core_read";
-      preamble += "(&" + arg->getName().str() + ", sizeof(" +
+      preamble += "((void*)&" + arg->getName().str() + ", sizeof(" +
                   arg->getName().str() + "), &" + new_ctx + "->" +
                   string(reg) + ");";
     }
