@@ -331,9 +331,9 @@ class ProbeSetter : public RecursiveASTVisitor<ProbeSetter> {
   int nb_derefs_;
 };
 
-MapVisitor::MapVisitor(set<Decl *> &m) : m_(m) {}
+BtoLibbpfMapVisitor::BtoLibbpfMapVisitor(set<Decl *> &m) : m_(m) {}
 
-bool MapVisitor::VisitCallExpr(CallExpr *Call) {
+bool BtoLibbpfMapVisitor::VisitCallExpr(CallExpr *Call) {
   if (MemberExpr *Memb = dyn_cast<MemberExpr>(Call->getCallee()->IgnoreImplicit())) {
     StringRef memb_name = Memb->getMemberDecl()->getName();
     if (DeclRefExpr *Ref = dyn_cast<DeclRefExpr>(Memb->getBase())) {
@@ -353,7 +353,7 @@ bool MapVisitor::VisitCallExpr(CallExpr *Call) {
   return true;
 }
 
-ProbeVisitor::ProbeVisitor(ASTContext &C, Rewriter &rewriter,
+BtoLibbpfProbeVisitor::BtoLibbpfProbeVisitor(ASTContext &C, Rewriter &rewriter,
                            set<Decl *> &m, bool track_helpers) :
   C(C), rewriter_(rewriter), m_(m), ctx_(nullptr), track_helpers_(track_helpers),
   addrof_stmt_(nullptr), is_addrof_(false) {
@@ -361,7 +361,7 @@ ProbeVisitor::ProbeVisitor(ASTContext &C, Rewriter &rewriter,
   cannot_fall_back_safely = (calling_conv_regs == calling_conv_regs_s390x || calling_conv_regs == calling_conv_regs_riscv64);
 }
 
-bool ProbeVisitor::assignsExtPtr(Expr *E, int *nbDerefs) {
+bool BtoLibbpfProbeVisitor::assignsExtPtr(Expr *E, int *nbDerefs) {
   if (IsContextMemberExpr(E)) {
     *nbDerefs = 0;
     return true;
@@ -412,7 +412,7 @@ bool ProbeVisitor::assignsExtPtr(Expr *E, int *nbDerefs) {
   }
   return false;
 }
-bool ProbeVisitor::VisitVarDecl(VarDecl *D) {
+bool BtoLibbpfProbeVisitor::VisitVarDecl(VarDecl *D) {
   if (Expr *E = D->getInit()) {
     int nbDerefs;
     if (assignsExtPtr(E, &nbDerefs)) {
@@ -424,10 +424,10 @@ bool ProbeVisitor::VisitVarDecl(VarDecl *D) {
   return true;
 }
 
-bool ProbeVisitor::TraverseStmt(Stmt *S) {
+bool BtoLibbpfProbeVisitor::TraverseStmt(Stmt *S) {
   if (whitelist_.find(S) != whitelist_.end())
     return true;
-  auto ret = RecursiveASTVisitor<ProbeVisitor>::TraverseStmt(S);
+  auto ret = RecursiveASTVisitor<BtoLibbpfProbeVisitor>::TraverseStmt(S);
   if (addrof_stmt_ == S) {
     addrof_stmt_ = nullptr;
     is_addrof_ = false;
@@ -435,7 +435,7 @@ bool ProbeVisitor::TraverseStmt(Stmt *S) {
   return ret;
 }
 
-bool ProbeVisitor::VisitCallExpr(CallExpr *Call) {
+bool BtoLibbpfProbeVisitor::VisitCallExpr(CallExpr *Call) {
   Decl *decl = Call->getCalleeDecl();
   if (decl == nullptr)
       return true;
@@ -480,7 +480,7 @@ bool ProbeVisitor::VisitCallExpr(CallExpr *Call) {
   }
   return true;
 }
-bool ProbeVisitor::VisitReturnStmt(ReturnStmt *R) {
+bool BtoLibbpfProbeVisitor::VisitReturnStmt(ReturnStmt *R) {
   /* If this function wasn't called by another, there's no need to check the
    * return statement for external pointers. */
   if (ptregs_returned_.size() == 0)
@@ -508,7 +508,7 @@ bool ProbeVisitor::VisitReturnStmt(ReturnStmt *R) {
   }
   return true;
 }
-bool ProbeVisitor::VisitBinaryOperator(BinaryOperator *E) {
+bool BtoLibbpfProbeVisitor::VisitBinaryOperator(BinaryOperator *E) {
   if (!E->isAssignmentOp())
     return true;
 
@@ -520,7 +520,7 @@ bool ProbeVisitor::VisitBinaryOperator(BinaryOperator *E) {
   }
   return true;
 }
-bool ProbeVisitor::VisitUnaryOperator(UnaryOperator *E) {
+bool BtoLibbpfProbeVisitor::VisitUnaryOperator(UnaryOperator *E) {
   if (E->getOpcode() == UO_AddrOf) {
     addrof_stmt_ = E;
     is_addrof_ = true;
@@ -541,7 +541,7 @@ bool ProbeVisitor::VisitUnaryOperator(UnaryOperator *E) {
   rewriter_.InsertTextAfterToken(expansionLoc(GET_ENDLOC(sub)), post);
   return true;
 }
-bool ProbeVisitor::VisitMemberExpr(MemberExpr *E) {
+bool BtoLibbpfProbeVisitor::VisitMemberExpr(MemberExpr *E) {
   if (memb_visited_.find(E) != memb_visited_.end()) return true;
 
   Expr *base;
@@ -559,6 +559,7 @@ bool ProbeVisitor::VisitMemberExpr(MemberExpr *E) {
   }
   if (!found)
     return true;
+
   if (member.isInvalid()) {
     error(GET_ENDLOC(base), "internal error: MemberLoc is invalid while preparing probe rewrite");
     return false;
@@ -587,6 +588,7 @@ bool ProbeVisitor::VisitMemberExpr(MemberExpr *E) {
   // through bpf_probe_read.
   if (!ProbeChecker(base, ptregs_, track_helpers_).needs_probe())
     return true;
+  // No supported by CO-RE?
 
   // If the base is an array, we will skip rewriting. See issue #2352.
   if (E->getType()->isArrayType())
@@ -601,7 +603,7 @@ bool ProbeVisitor::VisitMemberExpr(MemberExpr *E) {
   rewriter_.ReplaceText(expansionRange(SourceRange(E->getOperatorLoc(), GET_ENDLOC(E))), post);
   return true;
 }
-bool ProbeVisitor::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
+bool BtoLibbpfProbeVisitor::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
   if (memb_visited_.find(E) != memb_visited_.end()) return true;
   if (!ProbeChecker(E, ptregs_, track_helpers_).needs_probe())
     return true;
@@ -668,7 +670,7 @@ bool ProbeVisitor::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
   return true;
 }
 
-bool ProbeVisitor::isMemberDereference(Expr *E) {
+bool BtoLibbpfProbeVisitor::isMemberDereference(Expr *E) {
   if (E->IgnoreParenCasts()->getStmtClass() != Stmt::MemberExprClass)
     return false;
   for (MemberExpr *M = dyn_cast<MemberExpr>(E->IgnoreParenCasts()); M;
@@ -678,7 +680,7 @@ bool ProbeVisitor::isMemberDereference(Expr *E) {
   }
   return false;
 }
-bool ProbeVisitor::IsContextMemberExpr(Expr *E) {
+bool BtoLibbpfProbeVisitor::IsContextMemberExpr(Expr *E) {
   if (!E->getType()->isPointerType())
     return false;
 
@@ -718,7 +720,7 @@ bool ProbeVisitor::IsContextMemberExpr(Expr *E) {
 }
 
 SourceRange
-ProbeVisitor::expansionRange(SourceRange range) {
+BtoLibbpfProbeVisitor::expansionRange(SourceRange range) {
 #if LLVM_MAJOR_VERSION >= 7
   return rewriter_.getSourceMgr().getExpansionRange(range).getAsRange();
 #else
@@ -727,12 +729,12 @@ ProbeVisitor::expansionRange(SourceRange range) {
 }
 
 SourceLocation
-ProbeVisitor::expansionLoc(SourceLocation loc) {
+BtoLibbpfProbeVisitor::expansionLoc(SourceLocation loc) {
   return rewriter_.getSourceMgr().getExpansionLoc(loc);
 }
 
 template <unsigned N>
-DiagnosticBuilder ProbeVisitor::error(SourceLocation loc, const char (&fmt)[N]) {
+DiagnosticBuilder BtoLibbpfProbeVisitor::error(SourceLocation loc, const char (&fmt)[N]) {
   unsigned int diag_id = C.getDiagnostics().getCustomDiagID(DiagnosticsEngine::Error, fmt);
   return C.getDiagnostics().Report(loc, diag_id);
 }
@@ -919,7 +921,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
           string name = string(Ref->getDecl()->getName());
           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
           string arg1 = rewriter_.getRewrittenText(expansionRange(Call->getArg(1)->getSourceRange()));
-          string lookup = "bpf_map_lookup_or_try_init(&" + name;
+          string lookup = string("(") + Call->getArg(1)->getType().getAsString() + ")bpf_map_lookup_or_try_init(&" + name;
           txt  = lookup + ", " + arg0 + ", " + arg1 + ") ";
         } else if (memb_name == "increment" || memb_name == "atomic_increment") {
           string name = string(Ref->getDecl()->getName());
@@ -1200,7 +1202,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
             rewriter_.ReplaceText(expansionRange(Call->getSourceRange()), text);
           } else {
             rewriter_.ReplaceText(expansionRange(SourceRange(GET_BEGINLOC(Call), GET_ENDLOC(Call->getArg(0)))), text);
-            rewriter_.InsertTextAfter(GET_ENDLOC(Call), ")");
+            // rewriter_.InsertTextAfter(GET_ENDLOC(Call), ")");
           }
         } 
         else if (Decl->getName() == "bpf_num_cpus") {
@@ -1630,7 +1632,7 @@ bool BTypeVisitor::VisitVarDecl(VarDecl *Decl) {
 }
 
 // First traversal of AST to retrieve maps with external pointers.
-BTypeConsumer::BTypeConsumer(ASTContext &C, BtoLibbpfFrontendAction &fe,
+BtoLibbpfTypeConsumer::BtoLibbpfTypeConsumer(ASTContext &C, BtoLibbpfFrontendAction &fe,
                              Rewriter &rewriter, set<Decl *> &m)
     : fe_(fe),
       map_visitor_(m),
@@ -1638,15 +1640,15 @@ BTypeConsumer::BTypeConsumer(ASTContext &C, BtoLibbpfFrontendAction &fe,
       probe_visitor1_(C, rewriter, m, true),
       probe_visitor2_(C, rewriter, m, false) {}
 
-void BTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
+void BtoLibbpfTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
   DeclContext::decl_iterator it;
   DeclContext *DC = TranslationUnitDecl::castToDeclContext(Context.getTranslationUnitDecl());
 
   /**
-   * In a first traversal, ProbeVisitor tracks external pointers identified
+   * In a first traversal, BtoLibbpfProbeVisitor tracks external pointers identified
    * through each function's arguments and replaces their dereferences with
    * calls to bpf_probe_read. It also passes all identified pointers to
-   * external addresses to MapVisitor.
+   * external addresses to BtoLibbpfMapVisitor.
    */
   for (it = DC->decls_begin(); it != DC->decls_end(); it++) {
     Decl *D = *it;
@@ -1679,13 +1681,13 @@ void BTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
   }
 
   /**
-   * MapVisitor uses external pointers identified by the first ProbeVisitor
+   * BtoLibbpfMapVisitor uses external pointers identified by the first BtoLibbpfProbeVisitor
    * traversal to identify all maps with external pointers as values.
-   * MapVisitor runs only after ProbeVisitor finished its traversal of the
-   * whole translation unit to clearly separate the role of each ProbeVisitor's
+   * BtoLibbpfMapVisitor runs only after BtoLibbpfProbeVisitor finished its traversal of the
+   * whole translation unit to clearly separate the role of each BtoLibbpfProbeVisitor's
    * traversal: the first tracks external pointers from function arguments,
    * whereas the second tracks external pointers from maps. Without this clear
-   * separation, ProbeVisitor might attempt to replace several times the same
+   * separation, BtoLibbpfProbeVisitor might attempt to replace several times the same
    * dereferences.
    */
   for (it = DC->decls_begin(); it != DC->decls_end(); it++) {
@@ -1698,10 +1700,10 @@ void BTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
   }
 
   /**
-   * In a second traversal, ProbeVisitor tracks pointers passed through the
-   * maps identified by MapVisitor and replaces their dereferences with calls
+   * In a second traversal, BtoLibbpfProbeVisitor tracks pointers passed through the
+   * maps identified by BtoLibbpfMapVisitor and replaces their dereferences with calls
    * to bpf_probe_read.
-   * This last traversal runs after MapVisitor went through an entire
+   * This last traversal runs after BtoLibbpfMapVisitor went through an entire
    * translation unit, to ensure maps with external pointers have all been
    * identified.
    */
@@ -1756,10 +1758,10 @@ void BtoLibbpfFrontendAction::DoMiscWorkAround() {
     kresolver = NULL;
   }
   if (probefunc == "bpf_probe_read") {
-    probefunc = "#define bpf_probe_read_kernel bpf_probe_read\n"
-      "#define bpf_probe_read_kernel_str bpf_probe_read_str\n"
-      "#define bpf_probe_read_user bpf_probe_read\n"
-      "#define bpf_probe_read_user_str bpf_probe_read_str\n";
+    probefunc = "#define bpf_probe_read_kernel bpf_core_read\n"
+      "#define bpf_probe_read_kernel_str bpf_core_read_str\n"
+      "#define bpf_probe_read_user bpf_core_read\n"
+      "#define bpf_probe_read_user_str bpf_core_read_str\n";
   }
   else {
     probefunc = "";
@@ -1824,7 +1826,7 @@ void BtoLibbpfFrontendAction::EndSourceFileAction() {
 unique_ptr<ASTConsumer> BtoLibbpfFrontendAction::CreateASTConsumer(CompilerInstance &Compiler, llvm::StringRef InFile) {
   rewriter_->setSourceMgr(Compiler.getSourceManager(), Compiler.getLangOpts());
   vector<unique_ptr<ASTConsumer>> consumers;
-  consumers.push_back(unique_ptr<ASTConsumer>(new BTypeConsumer(Compiler.getASTContext(), *this, *rewriter_, m_)));
+  consumers.push_back(unique_ptr<ASTConsumer>(new BtoLibbpfTypeConsumer(Compiler.getASTContext(), *this, *rewriter_, m_)));
   return unique_ptr<ASTConsumer>(new MultiplexConsumer(std::move(consumers)));
 }
 

@@ -10,3 +10,8 @@
 #define REQ_OP_BITS	8
 #define REQ_OP_MASK	((1 << REQ_OP_BITS) - 1)
 #define REQ_FLAG_BITS	24
+
+#define AF_INET	2
+#define AF_INET6 10
+#define NSEC_PER_SEC		1000000000ULL
+

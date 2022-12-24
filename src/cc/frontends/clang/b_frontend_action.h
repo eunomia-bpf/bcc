@@ -43,9 +43,9 @@ class BtoLibbpfFrontendAction;
 class ProgFuncInfo;
 
 // Traces maps with external pointers as values.
-class MapVisitor : public clang::RecursiveASTVisitor<MapVisitor> {
+class BtoLibbpfMapVisitor : public clang::RecursiveASTVisitor<BtoLibbpfMapVisitor> {
  public:
-  explicit MapVisitor(std::set<clang::Decl *> &m);
+  explicit BtoLibbpfMapVisitor(std::set<clang::Decl *> &m);
   bool VisitCallExpr(clang::CallExpr *Call);
   void set_ptreg(std::tuple<clang::Decl *, int> &pt) { ptregs_.insert(pt); }
  private:
@@ -94,9 +94,9 @@ class BTypeVisitor : public clang::RecursiveASTVisitor<BTypeVisitor> {
 };
 
 // Do a depth-first search to rewrite all pointers that need to be probed
-class ProbeVisitor : public clang::RecursiveASTVisitor<ProbeVisitor> {
+class BtoLibbpfProbeVisitor : public clang::RecursiveASTVisitor<BtoLibbpfProbeVisitor> {
  public:
-  explicit ProbeVisitor(clang::ASTContext &C, clang::Rewriter &rewriter,
+  explicit BtoLibbpfProbeVisitor(clang::ASTContext &C, clang::Rewriter &rewriter,
                         std::set<clang::Decl *> &m, bool track_helpers);
   bool VisitVarDecl(clang::VarDecl *Decl);
   bool TraverseStmt(clang::Stmt *S);
@@ -134,17 +134,17 @@ class ProbeVisitor : public clang::RecursiveASTVisitor<ProbeVisitor> {
 };
 
 // A helper class to the frontend action, walks the decls
-class BTypeConsumer : public clang::ASTConsumer {
+class BtoLibbpfTypeConsumer : public clang::ASTConsumer {
  public:
-  explicit BTypeConsumer(clang::ASTContext &C, BtoLibbpfFrontendAction &fe,
+  explicit BtoLibbpfTypeConsumer(clang::ASTContext &C, BtoLibbpfFrontendAction &fe,
                          clang::Rewriter &rewriter, std::set<clang::Decl *> &m);
   void HandleTranslationUnit(clang::ASTContext &Context) override;
  private:
   BtoLibbpfFrontendAction &fe_;
-  MapVisitor map_visitor_;
+  BtoLibbpfMapVisitor map_visitor_;
   BTypeVisitor btype_visitor_;
-  ProbeVisitor probe_visitor1_;
-  ProbeVisitor probe_visitor2_;
+  BtoLibbpfProbeVisitor probe_visitor1_;
+  BtoLibbpfProbeVisitor probe_visitor2_;
 };
 
 // Create a B program in 2 phases (everything else is normal C frontend):

@@ -43,9 +43,9 @@ class BtoLibbpfFrontendAction;
 class ProgFuncInfo;
 
 // Traces maps with external pointers as values.
-class MapVisitor : public clang::RecursiveASTVisitor<MapVisitor> {
+class BtoLibbpfMapVisitor : public clang::RecursiveASTVisitor<MapVisitor> {
  public:
-  explicit MapVisitor(std::set<clang::Decl *> &m);
+  explicit BtoLibbpfMapVisitor(std::set<clang::Decl *> &m);
   bool VisitCallExpr(clang::CallExpr *Call);
   void set_ptreg(std::tuple<clang::Decl *, int> &pt) { ptregs_.insert(pt); }
  private:
@@ -94,7 +94,7 @@ class BTypeVisitor : public clang::RecursiveASTVisitor<BTypeVisitor> {
 };
 
 // Do a depth-first search to rewrite all pointers that need to be probed
-class ProbeVisitor : public clang::RecursiveASTVisitor<ProbeVisitor> {
+class BtoLibbpfProbeVisitor : public clang::RecursiveASTVisitor<ProbeVisitor> {
  public:
   explicit ProbeVisitor(clang::ASTContext &C, clang::Rewriter &rewriter,
                         std::set<clang::Decl *> &m, bool track_helpers);
@@ -141,10 +141,10 @@ class BTypeConsumer : public clang::ASTConsumer {
   void HandleTranslationUnit(clang::ASTContext &Context) override;
  private:
   BtoLibbpfFrontendAction &fe_;
-  MapVisitor map_visitor_;
+  BtoLibbpfMapVisitor map_visitor_;
   BTypeVisitor btype_visitor_;
-  ProbeVisitor probe_visitor1_;
-  ProbeVisitor probe_visitor2_;
+  BtoLibbpfProbeVisitor probe_visitor1_;
+  BtoLibbpfProbeVisitor probe_visitor2_;
 };
 
 // Create a B program in 2 phases (everything else is normal C frontend):

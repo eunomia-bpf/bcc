@@ -331,9 +331,9 @@ class ProbeSetter : public RecursiveASTVisitor<ProbeSetter> {
   int nb_derefs_;
 };
 
-MapVisitor::MapVisitor(set<Decl *> &m) : m_(m) {}
+BtoLibbpfMapVisitor::MapVisitor(set<Decl *> &m) : m_(m) {}
 
-bool MapVisitor::VisitCallExpr(CallExpr *Call) {
+bool BtoLibbpfMapVisitor::VisitCallExpr(CallExpr *Call) {
   if (MemberExpr *Memb = dyn_cast<MemberExpr>(Call->getCallee()->IgnoreImplicit())) {
     StringRef memb_name = Memb->getMemberDecl()->getName();
     if (DeclRefExpr *Ref = dyn_cast<DeclRefExpr>(Memb->getBase())) {
@@ -1655,7 +1655,7 @@ void BTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
    * In a first traversal, ProbeVisitor tracks external pointers identified
    * through each function's arguments and replaces their dereferences with
    * calls to bpf_probe_read. It also passes all identified pointers to
-   * external addresses to MapVisitor.
+   * external addresses to BtoLibbpfMapVisitor.
    */
   for (it = DC->decls_begin(); it != DC->decls_end(); it++) {
     Decl *D = *it;
@@ -1688,9 +1688,9 @@ void BTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
   }
 
   /**
-   * MapVisitor uses external pointers identified by the first ProbeVisitor
+   * BtoLibbpfMapVisitor uses external pointers identified by the first ProbeVisitor
    * traversal to identify all maps with external pointers as values.
-   * MapVisitor runs only after ProbeVisitor finished its traversal of the
+   * BtoLibbpfMapVisitor runs only after ProbeVisitor finished its traversal of the
    * whole translation unit to clearly separate the role of each ProbeVisitor's
    * traversal: the first tracks external pointers from function arguments,
    * whereas the second tracks external pointers from maps. Without this clear
@@ -1708,9 +1708,9 @@ void BTypeConsumer::HandleTranslationUnit(ASTContext &Context) {
 
   /**
    * In a second traversal, ProbeVisitor tracks pointers passed through the
-   * maps identified by MapVisitor and replaces their dereferences with calls
+   * maps identified by BtoLibbpfMapVisitor and replaces their dereferences with calls
    * to bpf_probe_read.
-   * This last traversal runs after MapVisitor went through an entire
+   * This last traversal runs after BtoLibbpfMapVisitor went through an entire
    * translation unit, to ensure maps with external pointers have all been
    * identified.
    */
